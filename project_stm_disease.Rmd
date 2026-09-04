@@ -1,0 +1,380 @@
+---
+title: "Project stm model: Disease"
+author: "A. Pedraza"
+date: '2024-12-04'
+output: html_document
+---
+
+```{r setup, include=FALSE,, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tm) # Load the tm package
+library(SnowballC)
+library(stm)
+library(wordcloud)
+library(readr)
+library(knitr)
+
+library(tidyverse)
+library(magrittr)
+library(dplyr)
+library(tidyr)
+
+library(viridis)
+library(kableExtra)
+library(ggplot2)
+library(hrbrthemes)
+
+
+```
+
+### Data Processing
+
+  - Download data from csv file.
+  
+  - Summary of data frame:
+  
+    + 3 columns: Abstract, Journal title, Year of publication
+    
+    + 1084 observations.
+    
+    + **Year** parameter spans from 2010-2024
+    
+    
+    
+<br>
+
+```{r cars}
+# Download csv file
+df_disease<- read.csv("final_df_disease.csv")
+print(summary(df_disease))
+```
+
+<br>
+
+**Data Frame Example**
+
+```{r, warning=FALSE}
+
+kbl(head(df_disease)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+
+
+### Histogram of Years Represneted
+
+  - Year 2014 is missing. There was an issue with retrieving data from that year for this assignment.
+  
+<br>
+
+```{r, warning=FALSE}
+
+df_disease %>%
+  ggplot( aes(x=Year, fill=Year)) +
+    geom_histogram(bins=15, fill='skyblue', color='#69b3a2', alpha=.6, width=.4) + scale_x_continuous(breaks=seq(2010,2024,1))+
+    #scale_fill_manual(values=c("#69b3a2", "#404080")) +
+    theme_bw() + ggtitle("Number of Articles in Dataset per Year") + xlab("Year of Publication") + 
+  ylab("Number of Articles")
+
+
+```
+
+
+
+<br>
+
+
+### Processing Data for stm()
+
+<br>
+
+  - documents = The journal abstracts from the dataset from 2010 - 2024
+  
+  - metadata = The journal name and the year the article was published in the journal
+  
+  - Using textProcessor() to process the abstracts, journal titles putting them in lowercase. I chose stem=FALSE since I wanted to make sure medical terms were kept intact.
+  
+  
+<br>
+
+```{r , warning=FALSE}
+documents <- df_disease$Abstract
+journal <- df_disease$Journal
+year <- df_disease$Year
+
+metadata <- data.frame(journal, year)
+
+processed_disease <- textProcessor(documents = documents, metadata = metadata ,stem=FALSE)
+out_disease<- prepDocuments(processed_disease$documents, processed_disease$vocab, processed_disease$meta, lower.thresh = 25)
+
+```
+
+<br>
+
+#### stm() with prevalence = ~ journal + year 
+
+  - The documents to review are the abstracts.
+  
+  - prevalence: my equation for prevalence includes both the year and journal data.
+
+  - After some previous runs, the maximum iterations needed were at most 100. Therefore, max.em.its = 100
+  
+  - Used gamma.prior = 'L1' to speed up the iteration process
+  
+  
+<br>
+
+
+```{r}
+
+stm_fit_disease<- stm(documents = out_disease$documents, vocab = out_disease$vocab, K =5, prevalence = ~ year + journal, max.em.its = 100, data = out_disease$meta, init.type = "Spectral", gamma.prior = 'L1',   seed = 237)
+
+```
+
+<br>
+
+
+### Results
+
+<br>
+
+
+**Summary Plot**
+
+<br>
+
+```{R}
+labelTopics(stm_fit_disease, c(1, 2, 3, 4, 5))
+```
+
+
+<br>
+
+<br>
+
+### Top Abstracts for Each of the Topics
+***
+
+  - Extract the top 2 Abstracts for each Topic using findThoughts() function.
+
+<br>
+
+**Topic 1:**
+
+**Label: Inflammatory Diseases Cells and Treatment**
+
+ 
+
+```{r}
+topic1_thoughts <- findThoughts(stm_fit_disease, text = documents, n=2, topics = 1)$docs[[1]]
+print(paste0(topic1_thoughts[1]))
+print(paste0(topic1_thoughts[2]))
+
+```
+
+
+<br>
+
+
+**Topic 2: The Top 2 Abstracts**
+
+<br>
+
+**Label: Disease Pain and Treatment**
+
+<br>
+
+```{r}
+topic2_thoughts <- findThoughts(stm_fit_disease, text = documents, n=2, topics = 2)$docs[[1]]
+print(paste0(topic2_thoughts[1]))
+print(paste0(topic2_thoughts[2]))
+```
+<br>
+
+<br>
+
+
+**Topic 3: The Top 2 Abstracts**
+
+<br>
+
+**Label: Autoimmune diseases and Relative Diseases**
+
+  - First abstract is on Parkinson's Disease and the second abstract is on Behcet's disease which is an autoimmune disorder that affects many parts of the body. Parkinson's disease also affects many parts of the body but is mostly noticed in the person's gait. Although Parkinson's disease is not considered to be an autoimmune disease, as stated below, there is some reasearch to suggest that it could play a role. 
+  
+  - It is interesting that stm() has grouped these two abstracts together. After reading both of the abstracts, it is difficult to understand what they have in common. But after researching the two disease separately and finding that there is a possiblity that PD may have a linke to autoimmune diseases, it makes sense that the model has grouped them into a topic. 
+  
+  - Although there is no word "autoimmune" in either of the abstracts, one could understand that the latent topic here is autoimmune disease. 
+  
+
+- From Google AI:
+
+"While Parkinson's disease is not typically considered a full-fledged autoimmune disease, growing research suggests that autoimmune mechanisms may play a role in its development."
+
+<br>
+
+```{r}
+topic3_thoughts <- findThoughts(stm_fit_disease, text = documents, n=2, topics = 3)$docs[[1]]
+print(paste0(topic3_thoughts[1]))
+print(paste0(topic3_thoughts[2]))
+```
+
+
+<br>
+
+**Topic 4: The Top 2 Abstracts**
+
+<br>
+
+  - **Label: Cardiovascular Disease Risk and Treatment**
+
+```{r}
+topic4_thoughts <- findThoughts(stm_fit_disease, text = documents, n=2, topics = 4)$docs[[1]]
+print(paste0(topic4_thoughts[1]))
+print(paste0(topic4_thoughts[2]))
+```
+
+<br>
+
+
+**Topic 5: The Top 2 Abstracts**
+
+<br>
+
+
+  - **Label: Infectious Disease: Prevention and Control**
+  
+<br>
+
+```{r}
+topic5_thoughts <- findThoughts(stm_fit_disease, text = documents, n=2, topics = 5)$docs[[1]]
+print(paste0(topic5_thoughts[1]))
+print("------------------------------")
+print(paste0(topic5_thoughts[2]))
+```
+
+<br>
+
+
+<br>
+
+### Metadata Relationship with Topics**
+***
+
+<br>
+```{r}
+#out_disease$meta$year <- as.numeric(out_disease$meta$year)
+prep <- estimateEffect(1:5 ~ year , stm_fit_disease, meta = out_disease$meta, uncertainty = "Global")
+
+```
+
+<br>
+
+**Topics 1 and 2**
+
+  - Topic 1: Inflammatory Diseases Treatments and Cells
+  
+  - Topic 2:  Disease Pain and Treatment
+  
+<br>
+
+  - Topic 1, Inflammatory Diseases and Treatments and Cells, shows a decline over the same 14 years.
+
+  - Topic 2, Disease Pain and Treatment, seems to be level over the past 14 years in terms of publications.
+  
+
+  
+<br>
+
+```{r}
+
+plot(prep, covariate = "year", method = "continuous", topics = c(1,2), model = stm_fit_disease, xlab = "Years", main = "Inflammatory disease (1) vs. Disease Pain and Treatment (2)" )
+
+```
+
+<br>
+
+<br>
+
+**Topics 3 and 4**
+
+  - Topic 3: Autoimmune diseases and Relative Diseases, has remained steady in the number of publications.
+  
+  - Topic 4: Cardiovascuar Disease Risk and Treatment, has shown an increase in the number of publications.
+  
+<br>
+  
+```{r}
+
+plot(prep, covariate = "year", method = "continuous", topics = c(3,4), model = stm_fit_disease, xlab = "Years", main = "Autoimmune disease (3) vs. Cardiovascular disease (4)")
+
+```
+
+<br>
+
+<br>
+
+**Topics 4 and 5**
+
+  - Topic 4: Cardiovascuar Disease Risk and Treatment, has shown an increase in the number of publications.
+  
+  - Topic 5: Infectious Disease: Prevention and Control has remained mostly the same.
+  
+<br>
+  
+```{r}
+
+plot(prep, covariate = "year", method = "continuous", topics = c(4, 5), model = stm_fit_disease, xlab = "Years", main = " Cardiovascular disease (4) vs. Infectious Disease Prevention(5)")
+
+```
+
+<br>
+
+#### Word Clouds
+
+<br>
+
+**Topic 3**
+```{r, warning=FALSE}
+par(mfrow = c(2, 2), mar = c(.1,.1,.1,.1))
+for (topic in 1:3) {
+  cloud(stm_fit_disease, topic = 3, scale = c(2, 0.5), max.words = 50, colors = brewer.pal(8, "Dark2"))
+}
+```
+
+
+<br>
+
+**Topic 5**
+```{r, warning=FALSE}
+par(mfrow = c(2, 2), mar = c(.1,.1,.1,.1))
+for (topic in 1:3) {
+  cloud(stm_fit_disease, topic = 5, scale = c(2, 0.5), max.words = 50, colors = brewer.pal(8, "Dark2"))
+}
+```
+
+
+
+<br>
+
+#### Discussion
+***
+
+- The stm model showed some interesting but also indirect results. The top abstracts related to the topics did not seem to be clearly related. A more involved invesigation was needed to fully understand the abstracts and how they could relate to each other. The top 7 words produced by the summary did not seem clearly linked to the abstracts but instead used very general terms whereas the abstracts were very specific.
+
+- The meta data **Year** and its relationship to the abstracts was very interesting. Some topics clearly increased in number of publications over time while others dropped. The data set was not as balanced as I would have preferred interms of years, but I'm not sure that it affected these results. Obtaining the same amount of publications per year was challenging since it is due to what is available in the PubMed database.
+
+<br>
+
+<br>
+
+
+
+
+
+
+
+
+
+

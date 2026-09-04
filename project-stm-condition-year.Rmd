@@ -1,0 +1,602 @@
+---
+title: "searchK and selectModel Methods"
+author: "A.Pedraza"
+output: html_document
+date: "2024-12-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(tidyverse)
+#library(magrittr)
+library(dplyr)
+library(tidyr)
+library(kableExtra)
+library(tm) # Load the tm package
+library(stm)
+library(wordcloud)
+```
+
+<br>
+
+**Summary of data frame**
+
+- Data used from csv file: **final_df_condition.csv**
+
+- Search into Pub Med included: Case Report and Clinical Trials of the following disease:
+  
+    + Cancer
+    + Viruses
+    + Parkinson's Disease
+    + Cardiovascular Disease
+
+<br>
+
+```{r}
+df<- read.csv("final_df_condition.csv")
+print(summary(df))
+
+```
+
+<br>
+
+**Dataframe example**
+
+```{r, warning=FALSE}
+kbl(head(df)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+```
+
+<br>
+
+<br>
+
+### Histogram of Years Represented
+
+  - The number of years is slightly off balance. It was difficult to get articles with abstracts in the later years.
+  
+<br>
+
+```{r, warning=FALSE}
+
+df %>%
+  ggplot( aes(x=Year, fill=Year)) +
+    geom_histogram(bins=15, fill='skyblue', color='#69b3a2', alpha=.6, width=.4) + scale_x_continuous(breaks=seq(2010,2024,1))+
+    #scale_fill_manual(values=c("#69b3a2", "#404080")) +
+    theme_bw() + ggtitle("Number of Articles in Dataset per Year") + xlab("Year of Publication") + 
+  ylab("Number of Articles")
+
+
+```
+
+<br>
+
+- A balanced number of medical conditions represented in the data set.
+
+```{r}
+df%>% ggplot( aes(x=Condition, fill=Condition)) + geom_bar(fill='orange', color='#69b3a2', alpha=.6, width=.4) + ggtitle("Number of Abstracts per Condition")
+
+```
+<br>
+
+<br>
+
+
+**Processing the data and text**
+
+  - Used textProcessor() from stm library to process the metadata and the documents. I chose 'stem = FALSE' because I did not want complicated medical terms to be misunderstood in the analysis.
+  
+  - The metadata is: 'Condition', 'Year', 'Journal'
+  
+  - The documents is the  'Abstract' column. 
+```{r}
+# Process the text
+
+documents <- df$Abstract
+journal <- df$Journal
+condition <- df$Condition
+year <- df$Year
+#title <- df$Title
+metadata <- data.frame(journal, year, condition)
+
+set.seed(1234)
+processed <- textProcessor(df$Abstract, metadata = metadata, stem=FALSE)
+out_cond <- prepDocuments(processed$documents, processed$vocab, processed$meta, lower.thresh = 25)
+
+docs_cond <- out_cond$documents
+vocab_cond <- out_cond$vocab
+meta_cond <- out_cond$meta
+
+```
+
+br>
+
+
+#### SearchK()
+
+  - Use searchK() to find the best number of Topics (value of K) to use in model search.
+
+```{r}
+k_result_cond <- searchK(documents = docs_cond, vocab = vocab_cond, prevalence = ~ year +  journal, K = seq(3, 10) , data = meta_cond, max.em.its = 200, gamma.prior = 'L1')
+
+```
+
+
+<br>
+
+<br>
+
+
+
+#### Plot of Search_K result
+***
+
+<br>
+
+##### Diagnostic Plots
+
+  - High semantic coherence for K = 5, but slightly higher Residuals and slightly low held-out likelihood.
+  
+<br>
+
+```{r}
+# Plots of ksearch results
+plot(k_result_cond)
+```
+
+
+<br>
+
+<br>
+
+##### Semantic Coherence and Exclusivity Plot and Composite Score
+***
+
+<br>
+
+**definitions**
+
+  - Semantic Coherence: When the most probable words to appear together in a given topic frequently occur together, this score is high. So we are looking for a high score in semantic coherence because that will tell us that the words of a given topic occur together with high frequency.
+  
+  - Exclusivity: tells us how strongly a set of words in a Topic is associated with that Topic because it is exclusive, most likely only found in that Topic rather than other topics.
+  
+  
+<br>
+
+**Composite Score Plot** 
+
+  - Composite Score calculation: 
+  
+    + Composite Score = 0.5 × Coherence + 0.5 × Exclusivity
+
+  - We are looking for a Topic with both a high Semantic Coherence score and a Exclusivity score.
+
+```{r}
+# get semantic coherence and exclusivity scores put in dataframe
+semcoh <- sapply(k_result_cond$results$semcoh, function(x) x[1])
+excl <- sapply(k_result_cond$results$exclus, function(x) x[1])
+k_val <- seq(3, 10)
+scores_df <- data.frame(Topics = k_val, Coherence = semcoh, Exclusivity = excl)
+
+# Composite score
+composite_score <- numeric()
+for (i in 1:nrow(scores_df)) {
+  
+  composite_score[i] <- (scores_df[i, 2] * (0.5)) + (scores_df[i, 3] * (0.5))
+
+}
+
+scores_df$composite_score<- composite_score
+```
+
+<br>
+
+  - Use the plot below to select the best value for K, the number of topics to be included in model.
+  
+  - The value of K that has the best composite score will have a value high in both Semantic coherence and Exclusivity.
+  
+  - From the plot below, it is evident that **K = 3, total number of topics in the model**, has the best Composite Score. This is the number for **K** that will be used in selectModel().
+  
+<br>
+
+```{r}
+ggplot(scores_df, aes(x = Topics, y = composite_score, label = Topics)) +
+  geom_point(colour = "green", size = 3) +
+  geom_text(vjust = -0.5) +
+  labs(title = "Topics vs. Composite Scores", x = "Number of Topics", y = "Composite Scores")+
+  theme_minimal()+
+  theme(axis.line = element_line(linewidth = 0.75),
+    axis.line.x.bottom = element_line(colour = "blue"),
+    axis.line.y.left = element_line(colour = "orange"))
+    
+```
+
+
+
+<br>
+
+### Select Model() with K = 3: Total Topics in Model
+
+  - Using selectModel() with number of topics = 3 to help find the best model for our data.
+  
+  - Using gamma.prior = 'L1' to help improve speed and convergence.
+<br>
+
+```{r cars}
+select_model_cond <- selectModel(out_cond$documents, out_cond$vocab, prevalence = ~ year +  journal, K = 3, data = out_cond$meta, runs = 30, seed =1234, max.em.its = 200, gamma.prior='L1')
+
+
+```
+
+
+<br>
+
+#### **Plot Semantic Coherence and Exclusivity Scores:**
+***
+
+- After 105 iterations, the model converged.
+
+<br>
+
+**Plot of Semantic Coherence and Exclusivity Scores of the different models found**
+
+<br>
+
+- From looking at the plot below, it looks like both Model 1 and Model 5 have the best overall scores. 
+```{r pressure, echo=FALSE}
+plotModels(select_model_cond, pch=c(1,2,3,4,5,6), legend.position="bottomright", main = "Scores of Models Found from Search")
+```
+<br>
+
+#### **Composite Scores for Exclusivity and Coherence**
+
+<br>
+
+- The below plot confirms that **Model 1** has the best overall exclusivity and semantic coherence scores.
+
+
+```{r}
+semcoh_2 <- sapply(select_model_cond$semcoh, function(x) x[1])
+excl_2 <- sapply(select_model_cond$exclusivity, function(x) x[1])
+
+k_val <- seq(1, 6)
+scores_df_2 <- data.frame(Topics = k_val, Coherence = semcoh_2, Exclusivity = excl_2)
+scores_df_2
+```
+
+```{r}
+
+# Composite score
+composite_score <- numeric()
+for (i in 1:nrow(scores_df_2)) {
+  # column 2 is coherence
+  # column 3 is exclusivity
+  composite_score[i] <- (scores_df_2[i, 2] * (0.5)) + (scores_df_2[i, 3] * (0.5))
+
+}
+
+scores_df_2$composite_score<- composite_score
+scores_df_2
+```
+
+
+```{r}
+ggplot(scores_df_2, aes(x = Topics, y = composite_score, label = Topics)) +
+  geom_point(colour = "green", size = 3) +
+  geom_text(vjust = -0.5) +
+  labs(title = "Topics vs. Composite Scores", x = "Model Number", y = "Composite Scores")+
+  theme_minimal()+
+  theme(axis.line = element_line(linewidth = 0.75),
+    axis.line.x.bottom = element_line(colour = "blue"),
+    axis.line.y.left = element_line(colour = "orange"))
+
+```
+
+<br>
+
+### Selecting Model and Printing Results
+
+<br>
+
+  - Selecting model #1 because it seems to have the highest overall Exclusivity and Semantic Coherence scores even though model 4 is very close to it.
+  
+  
+```{r}
+
+selected_model_1 <- select_model_cond$runout[[1]]
+
+```
+
+<br>
+
+#### Model 1: Top 7 Words for each of the 3 Topics
+***
+
+<br>
+
+  - You can use the summary() or labelTopics functions to see the top 7 words associated with each of the 3 Topics.
+
+<br>
+
+```{R}
+labelTopics(selected_model_1, c(1, 2, 3))
+```
+
+<br>
+
+### Top Abstracts for Each of the Topics and Labeling
+***
+
+  - Extract thetas from the model or use findThought() function.
+  
+  - With extracting thetas, use the highest theta values for each topic and its row index to find the abstract associated with that theta.
+  
+  - I labeled each topic using the top 7 words for each topic (both HIGHEST and FREX) as well as reading the abstract and summarizing in 4-5 words for the label. 
+  
+
+<br>
+
+
+**Topic 1: Journal, Year, and Abstract**
+
+<br>
+
+- From reading the abstract most associated with this topic, I'm putting the following label on Topic 1:
+
+  + Topic 1: **Protein and Cell Expression**
+
+<br>
+
+```{r}
+# Extract the thetas from the selected model
+theta_matrix <- selected_model_1$theta
+
+# Make matrix into a data frame and change column names
+theta_df_1 <- as.data.frame(theta_matrix)
+colnames(theta_df_1) <- c("Topic1","Topic2", "Topic3")
+
+
+
+# make a series of the thetas for each topic
+topic1 <- theta_df_1$Topic1
+topic2 <- theta_df_1$Topic2
+topic3 <- theta_df_1$Topic3
+
+```
+
+```{r}
+# Index numbers for the top theta value
+list <- tail(order(topic1),5)
+first = list[5]
+second = list[4]
+```
+
+```{r}
+# Theta values in decreasing order
+theta_1 <- theta_df_1[first,1]
+theta_2 <- theta_df_1[second,1]
+
+
+# The Top Review most associated with Topic 1
+print(paste0("First Article Theta Value:  " ,theta_1))
+print(paste0("Title of Article: ", df[first,1]))
+print(paste0("Journal Name: ",df[first,3]))
+print(paste0("Year: ",df[first,4]))
+print(paste0("Abstract 1: ", df[first,2]))
+print(paste0("Second Abstact Theta Value:  " ,theta_2))
+print(paste0("Abstract 2: ", df[second,2]))
+
+```
+
+<br>
+
+**Topic 2:  - using findThoughts()**
+
+<br>
+
+- From reading the abstract most associated with this topic, I'm putting the following label on Topic 2:
+
+  + Topic 2: **Rare Cancers and their Treatment**
+  
+
+```{r}
+topic2_thoughts <- findThoughts(selected_model_1, text = documents, n=2, topics = 2)$docs[[1]]
+print(paste0(topic2_thoughts[1]))
+
+print(paste0(topic2_thoughts[2]))
+
+```
+
+
+<br>
+
+<br>
+
+**Topic 3:**
+
+<br>
+
+- From reading the abstract most associated with this topic, I'm putting the following label on Topic 3:
+
+  + Topic 3: **Cardiovascular Disease Risks and Predictions**
+
+```{r}
+topic3_thoughts <- findThoughts(selected_model_1, text = documents, n=2, topics = 3)$docs[[1]]
+print(paste0(topic3_thoughts[1]))
+
+print(paste0(topic3_thoughts[2]))
+
+```
+
+
+
+<br>
+
+#### Word Clouds
+***
+
+<br>
+
+- Using word clouds to get a more visual look into what are the most frequent and exclusive words for each topic according to the model.
+
+**Topic 1**
+
+<br>
+
+```{r, warning = FALSE}
+par(mfrow = c(2, 2), mar = c(.1,.1,.1,.1))
+for (topic in 1:3) {
+  cloud(selected_model_1, topic = 1, scale = c(2, 0.5), max.words = 50, colors = brewer.pal(8, "Dark2"))
+}
+```
+
+<br>
+
+<br>
+
+**Topic 2**
+
+```{r, warning = FALSE}
+par(mfrow = c(2, 2), mar = c(.1,.1,.1,.1))
+for (topic in 1:3) {
+  cloud(selected_model_1, topic = 2, scale = c(2, 0.5), max.words = 50, colors = brewer.pal(8, "Dark2"))
+}
+```
+
+<br>
+
+**Topic 3**
+
+```{r, warning = FALSE}
+par(mfrow = c(2, 2), mar = c(.1,.1,.1,.1))
+for (topic in 1:3) {
+  cloud(selected_model_1, topic = 3, scale = c(2, 0.5), max.words = 50, colors = brewer.pal(8, "Dark2"))
+}
+```
+
+<br>
+
+
+### Metadata Relationships with Topics
+***
+
+  + Topic 1: **Protein and Cell Expression**
+
+  + Topic 2: **Rare Cancers and their Treatment**
+
+  + Topic 3: **Cardiovascular Disease Risks and Predictions**
+
+<br>
+
+  - Topic 1, protein and cell expression, proportion in medical literature has decreased over the years whereas topic 2, cardiovascular disease risk and predictions have increased.
+.
+
+```{r}
+#out_cond$meta$condition <- as.factor(out_cond$meta$condition)
+out_cond$meta$year <- as.numeric(out_cond$meta$year)
+prep <- estimateEffect(1:3 ~ year ,  selected_model_1, meta = meta_cond, uncertainty = "Global")
+```
+
+```{r}
+plot(prep, covariate = "year", method = "continuous", topics = c(1,2), model = selected_model_1 , main = "Proportion of Topic 1 and 2 over the past 14 years")
+
+```
+
+<br>
+
+**Plot**
+
+  - The proportion of Topic 3 **Cardiovascular Disease Risks and Predictions** has increased over the years:
+  
+```{r}
+plot(prep, covariate = "year", method = "continuous", topics = c(3), model = selected_model_1 , main = "Proportion of Topic 3 over the past 14 years")
+
+``` 
+
+<br>
+
+**Plot**
+
+  + Topic 1: **Protein and Cell Expression**
+
+  - This topic has decreased in proportion for both cancer and virus literature.
+  
+  
+```{r}
+prep2 <- estimateEffect(c(1) ~ condition * year, selected_model_1, metadata = out_cond$meta, uncertainty = "None")
+
+plot(prep2, covariate = "year", model = selected_model_1, method="continuous", xlab = "Years", moderator = "condition", moderator.value = "cancer", linecol = "blue", printlegend = FALSE, ylim = c(0, 1.0), main = "Proportion of Topic 1 for Cancer and Virus Publications")
+plot(prep2, covariate = "year", model = selected_model_1, method="continuous", xlab = "Years", moderator = "condition", moderator.value = "virus", linecol = "pink", printlegend = FALSE, add = TRUE)
+legend(x="top", legend = c("Cancer", "Virus"), lwd = 2, col = c("blue", "pink"))
+
+```
+
+<br>
+
+**Plot**
+
+
+  - Topic 2: **Rare Cancers and their Treatment**
+
+  - This topic has increased a lot in cancer literature.
+  
+  - This topic has shown a slight increase in proportion for cardiovascular disease literature.
+
+```{r}
+prep3 <- estimateEffect(c(2) ~ condition * year, selected_model_1, metadata = out_cond$meta, uncertainty = "None")
+
+plot(prep3, covariate = "year", model = selected_model_1, method="continuous", xlab = "Years", moderator = "condition", moderator.value = "cardiovascular disease", linecol = "green", printlegend = FALSE, ylim = c(0, 1.0), main = "Proportion of Topic 2 for CD and Cancer  Publications")
+plot(prep3, covariate = "year", model = selected_model_1, method="continuous", xlab = "Years", moderator = "condition", moderator.value = "cancer", linecol = "orange", printlegend = FALSE, add = TRUE)
+legend(x="top", legend = c("cardiovascular disease", "cancer"), lwd = 2, col = c("green", "orange"))
+
+```
+
+<br>
+
+**Plot**
+
+
+  - Topic 3: **Cardiovascular Disease Risks and Predictions**
+
+  - This topic has decreased slightly in cardiovascular disease literature. 
+  
+  - This topic has increased slightly in Parkinson's disease literature. 
+
+```{r}
+prep4 <- estimateEffect(c(3) ~ condition * year, selected_model_1, metadata = out_cond$meta, uncertainty = "None")
+
+plot(prep4, covariate = "year", model = selected_model_1, method="continuous", xlab = "Years", moderator = "condition", moderator.value = "cardiovascular disease", linecol = "green", printlegend = FALSE, ylim = c(0, 1.0), main = "Proportion of Topic 3 for PD and CD Publications")
+plot(prep4, covariate = "year", model = selected_model_1, method="continuous", xlab = "Years", moderator = "condition", moderator.value = "parkinsons disease", linecol = "orange", printlegend = FALSE, add = TRUE)
+legend(x="top", legend = c("cardiovascular disease", "parkinsons disease"), lwd = 2, col = c("green", "orange"))
+
+```
+
+<br>
+
+<br>
+
+**Plot**
+
+
+  - Topic : **Rare Cancers and their Treatment** - with Parkinson's Disease and Cardiovascular Disease
+
+  - This topic has increased a lot in cancer literature.
+  
+  - This topic has shown a slight increase in proportion for cardiovascular disease literature.
+
+```{r}
+prep5 <- estimateEffect(c(1) ~ condition * year, selected_model_1, metadata = out_cond$meta, uncertainty = "None")
+
+plot(prep5, covariate = "year", model = selected_model_1, method="continuous", xlab = "Years", moderator = "condition", moderator.value = "parkinsons disease", linecol = "green", printlegend = FALSE, ylim = c(0, 1.0), main = "Proportion of Topic 1 for PD and cardiovascular disease Publications")
+plot(prep5, covariate = "year", model = selected_model_1, method="continuous", xlab = "Years", moderator = "condition", moderator.value = "cardiovascular disease", linecol = "orange", printlegend = FALSE, add = TRUE)
+legend(x="top", legend = c("parkinsons disease", "cardiovascular disease"), lwd = 2, col = c("green", "orange"))
+
+```
+
+<br>
+
+
+
+
